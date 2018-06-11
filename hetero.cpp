@@ -43,7 +43,11 @@ static const char USAGE_MESSAGE[] =
 using namespace std;
 
 namespace opt {
-
+unsigned k=50;
+unsigned nhash;
+static string inputBloomPath;
+size_t m;
+double FPR=0.0;
 }
 
 static const char shortopts[] = "i:hv";

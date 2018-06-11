@@ -7,11 +7,11 @@ AC_CONFIG_SRCDIR([CreateBloom.cpp])
 AC_CONFIG_HEADER([config.h])
 
 if test -z $CXXFLAGS; then
-    CXXFLAGS='-O3'
+    CXXFLAGS='-O3 -std=c++0x'
 fi
 
 if test -z $CCFLAGS; then
-    CCFLAGS='-O3'
+    CCFLAGS='-O3 -std=c++0x'
 fi
 
 # Checks for programs.
