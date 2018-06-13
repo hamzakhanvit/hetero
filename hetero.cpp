@@ -20,6 +20,7 @@
 #include "FastaConcat.h"
 #include <unordered_map>
 #include <typeinfo>
+#include <unordered_set>
 
 #define PROGRAM "hetero"
 
@@ -66,7 +67,7 @@ static const struct option longopts[] = {
 };
 
 
-bool is_kmer_hetero(string it, BloomFilter& bf){
+bool is_kmer_hetero(string it, unordered_set<string>& kmers){
 
     //int str_length = it.length();
     int hetero_chance = 0;
@@ -82,10 +83,11 @@ bool is_kmer_hetero(string it, BloomFilter& bf){
 
            temp = it;
            temp2 = it;
-           if((*i)!=(temp[x])) 
-               cout << "Replaced at " << x << " with " << c << " to give " << (temp2).replace(x, 1, c) << endl;
-
-           if( ((*i)!=(temp[x])) && (bf.contains(((temp).replace(x, 1, c)).c_str()))){
+          // if((*i)!=(temp[x])) 
+              // cout << "Replaced at " << x << " with " << c << " to give " << (temp2).replace(x, 1, c) << endl;
+   
+           if( ((*i)!=(temp[x])) && (kmers.find(((temp).replace(x, 1, c)).c_str()) != kmers.end())){
+                cout << "Replaced at " << x << " with " << c << " to give " << (temp2).replace(x, 1, c) << endl;
                 cout << "HETERO" << endl;
                 hetero_chance++;
             } 
@@ -100,19 +102,27 @@ void kmertoreads(BloomFilter& bloom, int optind, char** argv) {
     BloomFilter& bf = bloom;
     std::ofstream kfile("kmersinreads.tsv");
     kfile << "kmer\tReadIDs";
+   
+    cerr << "optind" << argv[optind] << " " << bf.contains("AAAAAAAAAAAAAAAAAAATAAGATACGCTT") << endl;
+
     
     FastaReader kmerreader((opt::kmerfastafile).c_str(), FastaReader::FOLD_CASE);
     //FastaReader kmerreader(argv[optind], FastaReader::FOLD_CASE);
     cout << "kmer Filename = " << opt::kmerfastafile << endl;   
 
     unordered_map<string, vector<string>> kmerreads;
+    unordered_set<string> kmers; 
 
     for (FastaRecord kmer; kmerreader >> kmer;) {
-        bool is_hetero = is_kmer_hetero(kmer.seq,bf); 
-        cout << kmer.seq << " is hetero? " << is_hetero << endl;
+        kmers.insert(kmer.seq);
     }
 
-
+    unordered_set<string> :: iterator itr;
+    for (itr = kmers.begin(); itr != kmers.end(); itr++) {
+        bool is_hetero = is_kmer_hetero((*itr),kmers);
+        cout << (*itr) << " is hetero? " << is_hetero << endl;
+    }
+/*
     FastaReader reader(argv[optind], FastaReader::FOLD_CASE);
     cout << "Filename = " << argv[optind] << " typeid(variable).name() = " << typeid(argv[optind]).name()<< endl;
     for (FastaRecord rec; reader >> rec;) {
@@ -140,6 +150,7 @@ void kmertoreads(BloomFilter& bloom, int optind, char** argv) {
          kfile <<"\n";
      } 
 
+ */
 }
 
 
