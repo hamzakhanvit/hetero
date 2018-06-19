@@ -1,3 +1,8 @@
+
+#ifdef _OPENMP
+# include <omp.h>
+#endif
+
 #include <iostream>
 #include <iomanip>
 #include <string>
@@ -38,6 +43,7 @@ static const char USAGE_MESSAGE[] =
     "\n"
     "  -i, --input-bloom=FILE     load bloom filter from FILE\n"
     "  -f, --kmerfasta=FILE       kmer fasta FILE\n" 
+    "-t, --threads=N                    Use N parallel threads [1]\n" 
     "      --help	          display this help and exit\n"
     "      --version	          output version information and exit\n"
     "\n"
@@ -48,19 +54,26 @@ using namespace std;
 namespace opt {
 unsigned k=50;
 unsigned nhash;
+unsigned nThrd=1;
 static string inputBloomPath;
 static string kmerfastafile;
 size_t m;
 double FPR=0.0;
 }
 
-static const char shortopts[] = "i:f:hv";
+namespace hetero {
+unordered_set<string> hetero_kmers;
+
+}
+
+static const char shortopts[] = "t:i:f:hv";
 
 enum { OPT_HELP = 1, OPT_VERSION };
 
 static const struct option longopts[] = {
     { "input-bloom", required_argument, NULL, 'i' },  
     { "kmerfasta", required_argument, NULL, 'f' },
+    {"threads", required_argument, NULL, 't' },
     { "help",	no_argument, NULL, OPT_HELP },
     { "version",	no_argument, NULL, OPT_VERSION },
     { NULL, 0, NULL, 0 }
@@ -68,32 +81,39 @@ static const struct option longopts[] = {
 
 
 bool is_kmer_hetero(string it, unordered_set<string>& kmers){
-
-    //int str_length = it.length();
+//bool is_kmer_hetero(string it, BloomFilter& bf){
+    
     int hetero_chance = 0;
-    string temp, temp2;
-    cout << "kmer =" << it << endl;
+    string temp;
+    //cout << "kmer =" << it << endl;
 
     vector<char> bases = {'A','T','G','C'};
- 
+    //vector<string> check; 
     for (size_t x=0; x < it.length(); x++) {
       
-        for (std::vector<char>::const_iterator i=bases.begin(); i!=bases.end(); i++){
+        for (std::vector<char>::iterator i=bases.begin(); i!=bases.end(); i++){
            string c(1, *i);
 
            temp = it;
-           temp2 = it;
-          // if((*i)!=(temp[x])) 
-              // cout << "Replaced at " << x << " with " << c << " to give " << (temp2).replace(x, 1, c) << endl;
+           string new_kmer = ((temp).replace(x, 1, c)).c_str();
+ 
+           //if((*i)!=(temp[x])) 
+           //if((*i)!=(it.at(x)))
+           //   cout << "++++++++++Replaced at " << x << " with " << c << " to give " << new_kmer << endl;
    
-           if( ((*i)!=(temp[x])) && (kmers.find(((temp).replace(x, 1, c)).c_str()) != kmers.end())){
-                cout << "Replaced at " << x << " with " << c << " to give " << (temp2).replace(x, 1, c) << endl;
-                cout << "HETERO" << endl;
+           if(((*i)!=(it.at(x))) && (kmers.find(new_kmer) != kmers.end())){
+           //if( ((*i)!=(temp[x])) && (bf.contains(((temp).replace(x, 1, c)).c_str()))){  
+                cout << "HETERO Replaced at " << x << " with " << c << " to give " << new_kmer << endl;
+                //check.push_back(new_kmer);
                 hetero_chance++;
             } 
        }
     }
-    cout << "hetero_chance = " << hetero_chance << endl;
+
+    //for(auto &i:check)
+    //    cerr << "\nCheck=" << i << endl;
+
+    //cout << "hetero_chance = " << hetero_chance << endl;
     return hetero_chance == 1 ? 1 : 0;
 }
 
@@ -102,26 +122,47 @@ void kmertoreads(BloomFilter& bloom, int optind, char** argv) {
     BloomFilter& bf = bloom;
     std::ofstream kfile("kmersinreads.tsv");
     kfile << "kmer\tReadIDs";
-   
-    cerr << "optind" << argv[optind] << " " << bf.contains("AAAAAAAAAAAAAAAAAAATAAGATACGCTT") << endl;
-
     
+    cout  << argv[optind] << endl; 
     FastaReader kmerreader((opt::kmerfastafile).c_str(), FastaReader::FOLD_CASE);
     //FastaReader kmerreader(argv[optind], FastaReader::FOLD_CASE);
     cout << "kmer Filename = " << opt::kmerfastafile << endl;   
 
     unordered_map<string, vector<string>> kmerreads;
+
     unordered_set<string> kmers; 
 
     for (FastaRecord kmer; kmerreader >> kmer;) {
         kmers.insert(kmer.seq);
+        //bool is_hetero = is_kmer_hetero(kmer.seq,bf); 
+        //cout << kmer.seq << " is hetero? " << is_hetero << endl;
     }
 
-    unordered_set<string> :: iterator itr;
-    for (itr = kmers.begin(); itr != kmers.end(); itr++) {
-        bool is_hetero = is_kmer_hetero((*itr),kmers);
-        cout << (*itr) << " is hetero? " << is_hetero << endl;
+    cerr << "Size of kmers set = " << kmers.size() << endl;
+
+    
+    #pragma omp parallel
+    {   
+        #pragma omp single 
+        {
+            for (unordered_set<string> :: iterator itr = kmers.begin(); itr != kmers.end(); itr++) {
+                #pragma omp task 
+                {
+                    bool is_hetero = is_kmer_hetero((*itr),kmers);
+                    cout << (*itr) << " is hetero? " << is_hetero << endl;
+                    if(is_hetero) {
+                        hetero::hetero_kmers.insert(*itr);
+                    }
+                }
+            }
+        }
+            
     }
+    
+
+    for (auto &y:hetero::hetero_kmers)
+         cerr << "-hetero = " << y << endl;
+   
 /*
     FastaReader reader(argv[optind], FastaReader::FOLD_CASE);
     cout << "Filename = " << argv[optind] << " typeid(variable).name() = " << typeid(argv[optind]).name()<< endl;
@@ -169,6 +210,9 @@ int main(int argc, char** argv) {
         case 'f':
             arg >> opt::kmerfastafile;
             break;
+        case 't':
+            arg >> opt::nThrd;
+            break;
         case OPT_HELP:
             std::cerr << USAGE_MESSAGE;
             exit(EXIT_SUCCESS);
@@ -190,6 +234,10 @@ int main(int argc, char** argv) {
         std::cerr << "Try `" << PROGRAM << " --help' for more information.\n";
         exit(EXIT_FAILURE);
     }
+
+    #ifdef _OPENMP
+    omp_set_num_threads(opt::nThrd);
+    #endif
 
     if (!opt::inputBloomPath.empty()) {
 
