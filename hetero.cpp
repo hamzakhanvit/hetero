@@ -26,6 +26,8 @@
 #include <unordered_map>
 #include <typeinfo>
 #include <unordered_set>
+#include <boost/graph/adjacency_list.hpp>
+#include <boost/graph/connected_components.hpp>
 
 #define PROGRAM "hetero"
 
@@ -63,7 +65,7 @@ double FPR=0.0;
 
 namespace hetero {
 unordered_set<string> hetero_kmers;
-
+unordered_map<string, vector<string>> kmerbarcodes;
 }
 
 static const char shortopts[] = "t:i:f:hv";
@@ -118,17 +120,13 @@ bool is_kmer_hetero(string it, unordered_set<string>& kmers){
 }
 
 
-void kmertoreads(BloomFilter& bloom, int optind, char** argv) {
+void findheteroreads(BloomFilter& bloom, int optind, char** argv) {
     BloomFilter& bf = bloom;
-    std::ofstream kfile("kmersinreads.tsv");
-    kfile << "kmer\tReadIDs";
     
     cout  << argv[optind] << endl; 
     FastaReader kmerreader((opt::kmerfastafile).c_str(), FastaReader::FOLD_CASE);
     //FastaReader kmerreader(argv[optind], FastaReader::FOLD_CASE);
     cout << "kmer Filename = " << opt::kmerfastafile << endl;   
-
-    unordered_map<string, vector<string>> kmerreads;
 
     unordered_set<string> kmers; 
 
@@ -158,14 +156,20 @@ void kmertoreads(BloomFilter& bloom, int optind, char** argv) {
         }
             
     }
-    
-
     for (auto &y:hetero::hetero_kmers)
-         cerr << "-hetero = " << y << endl;
-   
-/*
+         cerr << "-hetero = " << y << endl;  
+
+    kmers.clear();
+}
+
+
+void findcommonbarcodes(int optind, char** argv) {  
+
+    std::ofstream kfile("kmersandbarcodes.tsv");
+    kfile << "kmer\tbarcodes\n";
+
     FastaReader reader(argv[optind], FastaReader::FOLD_CASE);
-    cout << "Filename = " << argv[optind] << " typeid(variable).name() = " << typeid(argv[optind]).name()<< endl;
+   
     for (FastaRecord rec; reader >> rec;) {
         if(int((rec.seq).length())<(int(opt::k)+5))
             continue;
@@ -174,26 +178,132 @@ void kmertoreads(BloomFilter& bloom, int optind, char** argv) {
         unsigned int pos = (opt::k)-1;
         int str_length = current_sec.length();
 
+        #pragma omp parallel for schedule(guided) shared (hetero::hetero_kmers, hetero::kmerbarcodes)
         for (unsigned int x=0; x < (str_length-((opt::k)-1)-2); x++) {
             string it = current_sec.substr(x,(opt::k));
             pos=pos+1;
-            if(bf.contains(it.c_str()))
+            if((hetero::hetero_kmers.find(it.c_str()) != hetero::hetero_kmers.end()) && (rec.comment!="")) {
+            //if(bf.contains(it.c_str())) {
                 std::cout << "Present kmer " << it << " in "  << rec.id << " Barcode = "<< rec.comment <<"\n";
-                //kmerreads[it].push_back(rec.id+":"+rec.comment);
+                hetero::kmerbarcodes[it].push_back(rec.comment);
+            }
         }
-     }
+    }
     
-      for (auto it = kmerreads.begin(); it != kmerreads.end(); it++)
-         {
-         kfile << it->first << "\t";
-         for(std::size_t it2 = 0; it2 < (*it).second.size(); ++it2)
-             kfile <<(*it).second[it2] << ",";
-         kfile <<"\n";
-     } 
+    for (auto it = hetero::kmerbarcodes.begin(); it != hetero::kmerbarcodes.end(); it++) {
+        kfile << it->first << "\t";
+        for(std::size_t it2 = 0; it2 < (*it).second.size(); ++it2)
+            kfile << (*it).second[it2] << "\t";
+        kfile <<"\n";
+    } 
 
- */
 }
 
+
+struct Vertex {
+    const char* name;
+    Vertex(const char* name = "default") : name(name) {}
+};
+
+template <typename It> boost::iterator_range<It> mir(std::pair<It, It> const& p) {
+    return boost::make_iterator_range(p.first, p.second);
+}
+
+template <typename It> boost::iterator_range<It> mir(It b, It e) {
+    return boost::make_iterator_range(b, e);
+}
+
+typedef typename boost::adjacency_list<
+    boost::setS, boost::vecS,
+    boost::undirectedS,
+    Vertex,                                      // bundled properties (id, name)
+    boost::property<boost::edge_weight_t, float> // interior property
+    > Graph;
+
+typedef Graph::edge_descriptor Edge;
+
+void save(Graph const& g, const char* fname);  
+
+
+#include <boost/graph/graphviz.hpp>
+#include <boost/property_map/property_map.hpp>
+#include <boost/property_map/function_property_map.hpp>
+#include <boost/property_map/transform_value_property_map.hpp>
+#include <boost/format.hpp>
+#include <fstream>
+void save(Graph const& g, const char* fname) {
+    std::ofstream ofs(fname);
+    using namespace boost;
+
+    write_graphviz(
+            ofs,
+            g,
+            make_label_writer(make_function_property_map<Graph::vertex_descriptor, std::string>([&] (Graph::vertex_descriptor v){ return g[v].name; })),
+            make_label_writer(make_transform_value_property_map([](float v){return boost::format("%1.1f") % v;}, boost::get(edge_weight, g)))
+        );
+}
+
+void makegraph(){
+    /*
+    typedef
+    boost::adjacency_list<
+      boost::vecS            // edge list
+    , boost::vecS            // vertex list
+    , boost::undirectedS     // directedness
+    , string                  // property associated with vertices
+    >
+    Graph;
+    
+
+    typedef boost::property<boost::edge_weight_t, int> EdgeWeightProperty;
+    typedef boost::adjacency_list<boost::setS, boost::vecS, boost::undirectedS,boost::no_property,EdgeWeightProperty> Graph;
+    typedef Graph::edge_descriptor Edge;
+ 
+    Graph g;    
+
+    for (auto it = hetero::kmerbarcodes.begin(); it != hetero::kmerbarcodes.end(); it++) {
+        for(std::size_t it2 = 0; it2 < (*it).second.size(); ++it2){
+            cout << it->first << (*it).second[it2] << endl;
+            std::pair<Edge, bool> ed = boost::edge((it->first).c_str(),((*it).second[it2]).c_str(),g);
+            int weight = get(boost::edge_weight_t(), g, ed.first);
+            int weightToAdd = 1;
+            boost::put(boost::edge_weight_t(), g, ed.first, weight+weightToAdd);
+
+        }
+    }
+
+    */
+    Graph graph;
+    
+    int vertex_id=-1;
+    for (auto it = hetero::kmerbarcodes.begin(); it != hetero::kmerbarcodes.end(); it++) {
+        for(std::size_t it2 = 0; it2 < (*it).second.size(); ++it2){ 
+             vertex_id++;
+             auto vertexA = add_vertex(Vertex { ((*it).second[it2]).c_str() }, graph); 
+             for(std::size_t it3 = 0; it3 < (*it).second.size(); ++it3){
+                  if(it2!=it3){
+                      vertex_id++;
+                      auto vertexB = add_vertex(Vertex { ((*it).second[it3]).c_str() }, graph);
+                      if(boost::edge(vertexA, vertexB, graph).second){ 
+                          std::pair<Edge, bool> ed = boost::edge(vertexA,vertexB,graph);
+                          int weight = get(boost::edge_weight_t(), graph, ed.first);
+                          int weightToAdd = 1.0;
+                          boost::put(boost::edge_weight_t(), graph, ed.first, weight+weightToAdd);
+                      }
+                      else {
+                          add_edge(vertexA, vertexB,  1.0f, graph);
+                      }
+                  }
+             }
+        }
+    }
+      
+    std::cout << "# of vertices : " << num_vertices(graph) << "\n";
+    std::cout << "# of edges:    " << num_edges(graph)    << "\n";
+    save(graph, "before.dot");
+
+  
+}
 
 int main(int argc, char** argv) {
 
@@ -264,7 +374,9 @@ int main(int argc, char** argv) {
         BloomFilter bloom(opt::m, opt::nhash, opt::k, opt::inputBloomPath.c_str());
         cerr << bloom.getPop() << "\n";
 
-        kmertoreads(bloom, optind, argv);
+        findheteroreads(bloom, optind, argv);
+        findcommonbarcodes(optind, argv);
+        makegraph();
     }
     else
         cerr << "No input file\n";
