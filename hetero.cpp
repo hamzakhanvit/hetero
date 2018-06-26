@@ -82,7 +82,7 @@ static const struct option longopts[] = {
 };
 
 
-bool is_kmer_hetero(string it, unordered_set<string>& kmers){
+void is_kmer_hetero(string it, unordered_set<string>& kmers){
 //bool is_kmer_hetero(string it, BloomFilter& bf){
     
     int hetero_chance = 0;
@@ -115,49 +115,81 @@ bool is_kmer_hetero(string it, unordered_set<string>& kmers){
     //for(auto &i:check)
     //    cerr << "\nCheck=" << i << endl;
 
-    //cout << "hetero_chance = " << hetero_chance << endl;
-    return hetero_chance == 1 ? 1 : 0;
+    cout << "hetero_chance = " << hetero_chance << endl;
+    int is_hetero = (hetero_chance == 1 ? 1 : 0);
+    cout << it << " is hetero? " << is_hetero << endl;
+    if(is_hetero) {
+        hetero::hetero_kmers.insert(it);
+    }
 }
 
 
-void findheteroreads(BloomFilter& bloom, int optind, char** argv) {
-    BloomFilter& bf = bloom;
+void findheteroreads(int optind, char** argv) {
+//void findheteroreads(BloomFilter& bloom, int optind, char** argv) {
+    //BloomFilter& bf = bloom;
     
     cout  << argv[optind] << endl; 
+    unordered_set<string> kmers;
+   
     FastaReader kmerreader((opt::kmerfastafile).c_str(), FastaReader::FOLD_CASE);
-    //FastaReader kmerreader(argv[optind], FastaReader::FOLD_CASE);
     cout << "kmer Filename = " << opt::kmerfastafile << endl;   
-
-    unordered_set<string> kmers; 
-
-    for (FastaRecord kmer; kmerreader >> kmer;) {
+   
+    for (FastaRecord kmer;kmerreader >> kmer;){
         kmers.insert(kmer.seq);
         //bool is_hetero = is_kmer_hetero(kmer.seq,bf); 
         //cout << kmer.seq << " is hetero? " << is_hetero << endl;
     }
-
-    cerr << "Size of kmers set = " << kmers.size() << endl;
-
     
+    cerr << "Size of kmers set = " << kmers.size() << endl;
+    //vector<string> kmers_vec;
+    //kmers_vec.insert(kmers_vec.end(), kmers.begin(), kmers.end());
+
+   /* 
     #pragma omp parallel
     {   
         #pragma omp single 
         {
             for (unordered_set<string> :: iterator itr = kmers.begin(); itr != kmers.end(); itr++) {
-                #pragma omp task 
+                #pragma omp task shared (hetero::hetero_kmers, kmers)
                 {
-                    bool is_hetero = is_kmer_hetero((*itr),kmers);
+                    is_kmer_hetero((*itr),kmers);
                     //cout << (*itr) << " is hetero? " << is_hetero << endl;
-                    if(is_hetero) {
-                        hetero::hetero_kmers.insert(*itr);
-                    }
+                    //if(is_hetero) {
+                    //    hetero::hetero_kmers.insert(*itr);
+                    //}
                 }
             }
         }
             
     }
-    //for (auto &y:hetero::hetero_kmers)
-         //cerr << "-hetero = " << y << endl;  
+
+    */
+    int kmersize = kmers.size();
+    #pragma omp parallel for shared (hetero::hetero_kmers, kmers)
+    for(int b = 0; b < kmersize; b++){
+        unordered_set<string> :: iterator itr = kmers.begin();
+        advance(itr, b);
+        is_kmer_hetero((*itr),kmers);
+        cout << "LOOP=" << b << endl;
+    }
+    
+       
+    /*
+    #pragma omp parallel for shared (hetero::hetero_kmers, kmers) 
+    for (std::size_t i = 0; i != kmers_vec.size(); ++i) {
+        bool is_hetero = is_kmer_hetero(kmers_vec[i],kmers);
+        if(is_hetero) {
+            hetero::hetero_kmers.insert(kmers_vec[i]);
+        }
+
+    }
+
+    */
+
+
+
+    for (auto &y:hetero::hetero_kmers)
+         cerr << "-hetero = " << y << endl;  
 
     kmers.clear();
 }
@@ -184,12 +216,12 @@ void findcommonbarcodes(int optind, char** argv) {
             pos=pos+1;
             if((hetero::hetero_kmers.find(it.c_str()) != hetero::hetero_kmers.end()) && (rec.comment!="")) {
             //if(bf.contains(it.c_str())) {
-                //std::cout << "Present kmer " << it << " in "  << rec.id << " Barcode = "<< rec.comment <<"\n";
+                std::cout << "Present kmer " << it << " in "  << rec.id << " Barcode = "<< rec.comment <<"\n";
                 hetero::kmerbarcodes[it].push_back(rec.comment);
             }
         }
     }
-    
+    cerr << "\nFinished findcommonbarcodes for loop\n" << endl;   
     for (auto it = hetero::kmerbarcodes.begin(); it != hetero::kmerbarcodes.end(); it++) {
         kfile << it->first << "\t";
         for(std::size_t it2 = 0; it2 < (*it).second.size(); ++it2)
@@ -411,10 +443,11 @@ int main(int argc, char** argv) {
         cerr << opt::m << "\t" << opt::nhash<< "\t" <<opt::k <<"\t" << opt::FPR << "\n";
         bfinfo.close();
 
-        BloomFilter bloom(opt::m, opt::nhash, opt::k, opt::inputBloomPath.c_str());
-        cerr << bloom.getPop() << "\n";
+        //BloomFilter bloom(opt::m, opt::nhash, opt::k, opt::inputBloomPath.c_str());
+        //cerr << bloom.getPop() << "\n";
 
-        findheteroreads(bloom, optind, argv);
+        //findheteroreads(bloom, optind, argv);
+        findheteroreads(optind, argv);
         findcommonbarcodes(optind, argv);
         makegraph();
     }
