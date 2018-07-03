@@ -86,38 +86,38 @@ void is_kmer_hetero(string it, unordered_set<string>& kmers){
 //bool is_kmer_hetero(string it, BloomFilter& bf){
     
     int hetero_chance = 0;
-    string temp;
     //cout << "kmer =" << it << endl;
+    std::string test_kmer = it;
+    //vector<string> check;
 
-    vector<char> bases = {'A','T','G','C'};
-    //vector<string> check; 
+    //vector<char> bases = {'A','T','G','C'};
+    const char* bases = "ACGT";
+
     for (size_t x=0; x < it.length(); x++) {
-      
-        for (std::vector<char>::iterator i=bases.begin(); i!=bases.end(); i++){
-           string c(1, *i);
+        ////int FID = omp_get_thread_num();
+        ////cout << "x=" << x << " FID = " << FID << endl;     
+         
+        test_kmer = it;
+        char curr_base = test_kmer[x];
 
-           temp = it;
-           string new_kmer = ((temp).replace(x, 1, c)).c_str();
- 
-           //if((*i)!=(temp[x])) 
-           //if((*i)!=(it.at(x)))
-           //   cout << "++++++++++Replaced at " << x << " with " << c << " to give " << new_kmer << endl;
-   
-           if(((*i)!=(it.at(x))) && (kmers.find(new_kmer) != kmers.end())){
-           //if( ((*i)!=(temp[x])) && (bf.contains(((temp).replace(x, 1, c)).c_str()))){  
-                //cout << "HETERO Replaced at " << x << " with " << c << " to give " << new_kmer << endl;
-                //check.push_back(new_kmer);
-                hetero_chance++;
-            } 
+        for(size_t bi = 0; bi < 4; ++bi) {
+            char test_base = bases[bi];
+            if(test_base == curr_base) {
+                continue;
+            }
+
+            test_kmer[x] = test_base;
+            //cout << "tmer =" << test_kmer << endl;
+            hetero_chance += kmers.find(test_kmer) != kmers.end();
        }
     }
 
     //for(auto &i:check)
     //    cerr << "\nCheck=" << i << endl;
 
-    cout << "hetero_chance = " << hetero_chance << endl;
+    ////cout << "hetero_chance = " << hetero_chance << endl;
     int is_hetero = (hetero_chance == 1 ? 1 : 0);
-    cout << it << " is hetero? " << is_hetero << endl;
+    ////cout << it << " is hetero? " << is_hetero << endl;
     if(is_hetero) {
         hetero::hetero_kmers.insert(it);
     }
@@ -164,35 +164,37 @@ void findheteroreads(int optind, char** argv) {
     }
 
     */
+
+    /*
     int kmersize = kmers.size();
-    #pragma omp parallel for shared (hetero::hetero_kmers, kmers)
+    #pragma omp parallel for schedule(guided) shared (hetero::hetero_kmers, kmers)
     for(int b = 0; b < kmersize; b++){
+        ////int ID = omp_get_thread_num();
+        ////cout << "b=" << b << " ID = " << ID << endl;
         unordered_set<string> :: iterator itr = kmers.begin();
         advance(itr, b);
         is_kmer_hetero((*itr),kmers);
-        cout << "LOOP=" << b << endl;
+        ////cout << "LOOP=" << b << endl;
     }
-    
-       
-    /*
-    #pragma omp parallel for shared (hetero::hetero_kmers, kmers) 
-    for (std::size_t i = 0; i != kmers_vec.size(); ++i) {
-        bool is_hetero = is_kmer_hetero(kmers_vec[i],kmers);
-        if(is_hetero) {
-            hetero::hetero_kmers.insert(kmers_vec[i]);
-        }
-
-    }
-
     */
 
+    //Convert set to vector for openmp parallelization
+    vector<string> kmers_vec;
+    kmers_vec.assign( kmers.begin(), kmers.end() );       
+    
+    #pragma omp parallel for schedule(guided) shared (hetero::hetero_kmers, kmers) 
+    for (std::size_t i = 0; i < kmers_vec.size(); i++) {
+        is_kmer_hetero(kmers_vec[i],kmers);
+
+    }
 
 
-    for (auto &y:hetero::hetero_kmers)
-         cerr << "-hetero = " << y << endl;  
+    //for (auto &y:hetero::hetero_kmers)
+    //    cerr << "-hetero = " << y << endl;  
 
     kmers.clear();
 }
+
 
 
 void findcommonbarcodes(int optind, char** argv) {  
@@ -203,7 +205,7 @@ void findcommonbarcodes(int optind, char** argv) {
     FastaReader reader(argv[optind], FastaReader::FOLD_CASE);
    
     for (FastaRecord rec; reader >> rec;) {
-        if(int((rec.seq).length())<(int(opt::k)+5))
+        if((int)rec.seq.length()<(int)(opt::k+5))
             continue;
 
         std::string current_sec = rec.seq;
@@ -216,7 +218,7 @@ void findcommonbarcodes(int optind, char** argv) {
             pos=pos+1;
             if((hetero::hetero_kmers.find(it.c_str()) != hetero::hetero_kmers.end()) && (rec.comment!="")) {
             //if(bf.contains(it.c_str())) {
-                std::cout << "Present kmer " << it << " in "  << rec.id << " Barcode = "<< rec.comment <<"\n";
+                ////std::cout << "Present kmer " << it << " in "  << rec.id << " Barcode = "<< rec.comment <<"\n";
                 hetero::kmerbarcodes[it].push_back(rec.comment);
             }
         }
@@ -230,9 +232,6 @@ void findcommonbarcodes(int optind, char** argv) {
     } 
 
 }
-
-
-
 
 struct Vertex {
     int id;
@@ -299,8 +298,8 @@ void numcomponents(Graph &graph){
 
 void makegraph(){
     Graph graph;
-    
-    int vertex_id=-1;
+
+    int vertex_id = 0;
     unordered_map<string,int> barcodeID;
     //boost::graph_traits<Graph>::vertex_descriptor vertexA = vertex(0,graph);
     //boost::graph_traits<Graph>::vertex_descriptor vertexB = vertex(0,graph);
@@ -312,55 +311,61 @@ void makegraph(){
 
 
     for (auto it = hetero::kmerbarcodes.begin(); it != hetero::kmerbarcodes.end(); it++) {
+        // remove duplicate barcodes from this heterozygous kmer
+        std::vector<std::string>& barcodes_for_kmer = it->second;
+        set<string> s( barcodes_for_kmer.begin(), barcodes_for_kmer.end() );
+        barcodes_for_kmer.assign( s.begin(), s.end() );
 
-        set<string> s( (*it).second.begin(), (*it).second.end() );
-        (*it).second.assign( s.begin(), s.end() );
+        // skip if too few barcodes
+        if(barcodes_for_kmer.size() <= 1) {
+            continue;
+        }
 
-        if((*it).second.size()>1) {
+        // create vertices in first pass
+        for(std::size_t barcode_idx = 0; barcode_idx < barcodes_for_kmer.size(); ++barcode_idx) {
+            const char* barcode_str = barcodes_for_kmer[barcode_idx].c_str();
+            if (barcodeID.find(barcode_str) == barcodeID.end()) {
+                vertexA = add_vertex(Vertex {vertex_id, barcode_str}, graph);
+                barcodeID[barcode_str] = vertex_id;
+                vertex_id++;
+            }
+        }
 
-        for(std::size_t it2 = 0; it2 < (*it).second.size(); ++it2){ 
-             if (barcodeID.find(((*it).second[it2]).c_str()) == barcodeID.end()) {
-                 vertex_id++;
-                 vertexA = add_vertex(Vertex {vertex_id, (((*it).second[it2])).c_str() }, graph);
-                 barcodeID[((*it).second[it2]).c_str()] = vertex_id;
+        // create edges between pairs of barcodes
+        for(std::size_t barcode_idx1 = 0; barcode_idx1 < barcodes_for_kmer.size(); ++barcode_idx1) {
+            const std::string& barcode_str1 = barcodes_for_kmer[barcode_idx1];
+             for(std::size_t barcode_idx2 = barcode_idx1 + 1; barcode_idx2 < barcodes_for_kmer.size(); ++barcode_idx2) {
+                const std::string& barcode_str2 = barcodes_for_kmer[barcode_idx2];
+                //cout <<"kmer=" << it->first << ", barcode_str1 = "  << barcode_str1  << ", barcodeID[barcode_str1] ="<< barcodeID[barcode_str1] 
+                //     << ", barcode_str2 = "  << barcode_str2 << ", barcodeID[barcode_str2] ="<< barcodeID[barcode_str2] << endl;
+                assert(barcode_str1 != barcode_str2);
+                std::pair<Edge, bool> edge_iter = (boost::edge(barcodeID[barcode_str1], barcodeID[barcode_str2], graph));
+
+                // was edge created?
+                if(edge_iter.second) {
+                    int weight = get(boost::edge_weight_t(), graph, edge_iter.first);
+                    //cerr << "Weight = " << weight << endl;
+                    int weightToAdd = 1.0;
+                    boost::put(boost::edge_weight_t(), graph, edge_iter.first, weight+weightToAdd);
+                }
+
+                if (!(edge_iter.second) 
+                     && (barcodeID[barcode_str1])!=(barcodeID[barcode_str2])) {
+                     //cout << "New edge\n";                     
+                     //cout << "Vertex A= " << graph[barcodeID[barcode_str1]].id <<  graph[barcodeID[barcode_str1]].name << endl;
+                     //cout << "Vertex B= " << graph[barcodeID[barcode_str2]].id <<  graph[barcodeID[barcode_str2]].name << endl;
+                     vertexA = boost::vertex(barcodeID[barcode_str1], graph);
+                     vertexB = boost::vertex(barcodeID[barcode_str2], graph);
+                     add_edge(vertexA, vertexB, 1.0f, graph);
+                }
              }
-
-             for(std::size_t it3 = 0; it3 < (*it).second.size(); ++it3){
-                  if(it2!=it3){
-                     if (barcodeID.find(((*it).second[it3]).c_str()) == barcodeID.end()) {
-                         vertex_id++;
-                         vertexB = add_vertex(Vertex { vertex_id,(((*it).second[it3])).c_str() }, graph);
-                         barcodeID[((*it).second[it3]).c_str()] = vertex_id;
-                      
-                      }          
-                             
-                      if((boost::edge(barcodeID[((*it).second[it2]).c_str()], barcodeID[((*it).second[it3]).c_str()], graph).second) 
-                         && (((*it).second[it2])!=((*it).second[it3]))){ 
-                          std::pair<Edge, bool> ed = boost::edge(barcodeID[((*it).second[it2]).c_str()], barcodeID[((*it).second[it3]).c_str()],graph);
-                          int weight = get(boost::edge_weight_t(), graph, ed.first);
-                          //cerr << "Weight = " << weight << endl;
-                          int weightToAdd = 1.0;
-                          boost::put(boost::edge_weight_t(), graph, ed.first, weight+weightToAdd);
-                      }
-                      if (!(boost::edge(barcodeID[((*it).second[it2]).c_str()], barcodeID[((*it).second[it3]).c_str()], graph).second) 
-                           && (((*it).second[it2])!=((*it).second[it3]))) {
-                           //cout << "New edge\n";
-                           add_edge(vertexA, vertexB,  1.0f, graph);
-                      }
-                  }
-              }
-         }
-
          }
     }
-
-
-
 
       
     std::cout << "# of vertices : " << num_vertices(graph) << "\n";
     std::cout << "# of edges:    " << num_edges(graph)    << "\n";
-    /*   
+       
     for (auto vd : boost::make_iterator_range(vertices(graph))) {
     std::cout << "Vertex descriptor #" << vd 
          << " degree:" << degree(vd, graph)
@@ -368,7 +373,7 @@ void makegraph(){
          << " name:"     << graph[vd].name
          << "\n";
     }
-    */
+    
     save(graph, "before.dot");
     numcomponents(graph);
   
@@ -454,3 +459,4 @@ int main(int argc, char** argv) {
     else
         cerr << "No input file\n";
 }
+
