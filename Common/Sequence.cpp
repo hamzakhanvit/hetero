@@ -89,6 +89,13 @@ Sequence reverseComplement(const Sequence& s)
     return rc;
 }
 
+/** Return the lexicographically smallest between sequence and its rev complement. */
+Sequence canonical_representation(const Sequence& kmer) {
+    Sequence revcom = reverseComplement(kmer);
+    cout << "kmer = " << kmer << ", Revcom kmer = " << revcom << ", lexgreater = " << (kmer < revcom ? kmer : revcom) << endl;
+    return kmer < revcom ? kmer : revcom;
+}
+
 static const uint8_t b2C[256] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, //0
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,

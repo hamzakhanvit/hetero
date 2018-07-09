@@ -23,6 +23,7 @@
 #include "pstream.h"
 #include "Options.h"
 #include "FastaConcat.h"
+#include "Sequence.h"
 #include <unordered_map>
 #include <typeinfo>
 #include <unordered_set>
@@ -108,7 +109,7 @@ void is_kmer_hetero(string it, unordered_set<string>& kmers){
 
             test_kmer[x] = test_base;
             //cout << "tmer =" << test_kmer << endl;
-            hetero_chance += kmers.find(test_kmer) != kmers.end();
+            hetero_chance += kmers.find(canonical_representation(test_kmer)) != kmers.end();
        }
     }
 
@@ -119,6 +120,7 @@ void is_kmer_hetero(string it, unordered_set<string>& kmers){
     int is_hetero = (hetero_chance == 1 ? 1 : 0);
     ////cout << it << " is hetero? " << is_hetero << endl;
     if(is_hetero) {
+        #pragma omp critical
         hetero::hetero_kmers.insert(it);
     }
 }
@@ -132,10 +134,10 @@ void findheteroreads(int optind, char** argv) {
     unordered_set<string> kmers;
    
     FastaReader kmerreader((opt::kmerfastafile).c_str(), FastaReader::FOLD_CASE);
-    cout << "kmer Filename = " << opt::kmerfastafile << endl;   
-   
+    cout << "kmer Filename = " << opt::kmerfastafile << endl;    
+ 
     for (FastaRecord kmer;kmerreader >> kmer;){
-        kmers.insert(kmer.seq);
+        kmers.insert(canonical_representation(kmer.seq));
         //bool is_hetero = is_kmer_hetero(kmer.seq,bf); 
         //cout << kmer.seq << " is hetero? " << is_hetero << endl;
     }
@@ -180,19 +182,25 @@ void findheteroreads(int optind, char** argv) {
 
     //Convert set to vector for openmp parallelization
     vector<string> kmers_vec;
-    kmers_vec.assign( kmers.begin(), kmers.end() );       
-    
+    //kmers_vec.assign( kmers.begin(), kmers.end() );   
+    kmers_vec.insert(kmers_vec.end(), kmers.begin(), kmers.end());    
+   
+     
+    int kmers_vec_size = kmers_vec.size();   
+    cout << "kmers_vec_size = " << kmers_vec_size << endl;
+ 
     #pragma omp parallel for schedule(guided) shared (hetero::hetero_kmers, kmers) 
-    for (std::size_t i = 0; i < kmers_vec.size(); i++) {
+    for (int i = 0; i < kmers_vec_size; i++) {
+        //cerr << i << endl;
         is_kmer_hetero(kmers_vec[i],kmers);
 
     }
 
-
+    cerr << "Completed findheteroreads" << ", Size of hetero::hetero_kmers = "<<  hetero::hetero_kmers.size()<< endl;
     //for (auto &y:hetero::hetero_kmers)
     //    cerr << "-hetero = " << y << endl;  
 
-    kmers.clear();
+    //kmers.clear();
 }
 
 
@@ -209,21 +217,27 @@ void findcommonbarcodes(int optind, char** argv) {
             continue;
 
         std::string current_sec = rec.seq;
-        unsigned int pos = (opt::k)-1;
+        //cout << rec.id << " - "  << rec.comment <<endl;
+        //cout << rec.seq << endl; 
+        //unsigned int pos = (opt::k)-1;
         int str_length = current_sec.length();
 
-        #pragma omp parallel for schedule(guided) shared (hetero::hetero_kmers, hetero::kmerbarcodes)
+         
+        #pragma omp parallel for schedule(guided)  shared (hetero::hetero_kmers, hetero::kmerbarcodes, current_sec, str_length)
         for (unsigned int x=0; x < (str_length-((opt::k)-1)-2); x++) {
             string it = current_sec.substr(x,(opt::k));
-            pos=pos+1;
-            if((hetero::hetero_kmers.find(it.c_str()) != hetero::hetero_kmers.end()) && (rec.comment!="")) {
+            //pos=pos+1;
+            if((hetero::hetero_kmers.find(canonical_representation(it.c_str())) != hetero::hetero_kmers.end()) && (rec.comment!="")) {
             //if(bf.contains(it.c_str())) {
-                ////std::cout << "Present kmer " << it << " in "  << rec.id << " Barcode = "<< rec.comment <<"\n";
+                //std::cout << "Present kmer " << it << " in "  << rec.id << " Barcode = "<< rec.comment <<"\n";
+                #pragma omp critical
                 hetero::kmerbarcodes[it].push_back(rec.comment);
             }
         }
+
     }
-    cerr << "\nFinished findcommonbarcodes for loop\n" << endl;   
+    cerr << "\nFinished findcommonbarcodes for loop\n" << "hetero::kmerbarcodes size = "<< hetero::kmerbarcodes.size() << endl;   
+
     for (auto it = hetero::kmerbarcodes.begin(); it != hetero::kmerbarcodes.end(); it++) {
         kfile << it->first << "\t";
         for(std::size_t it2 = 0; it2 < (*it).second.size(); ++it2)
@@ -294,6 +308,69 @@ void numcomponents(Graph &graph){
     }
     */
 }
+
+
+Graph reduce(Graph graph) {
+
+    /* vertex iterator */
+    using vertex_descriptor = boost::graph_traits<Graph>::vertex_descriptor;
+
+    //std::cout << "# of vertices: " << num_vertices(graph) << "\n";
+    //std::cout << "# of edges:    " << num_edges(graph)    << "\n";
+
+    std::set<vertex_descriptor> to_remove;
+
+    /* iterator throught the graph  */
+    for (auto self : mir(vertices(graph)))
+    {
+        //std::cout << graph[self].name << (boost::empty(mir(out_edges(self, graph)))? " has no children " : " is the parent of ");
+
+        for(auto edge : mir(out_edges(self, graph))) {
+            auto weight    = boost::get(boost::edge_weight, graph, edge);
+            //auto mid_point = target(edge, graph);
+
+            //if (to_remove.count(mid_point)) // already elided
+            //    break;
+
+            if (weight < 10.0f) {
+
+                remove_edge(edge, graph);
+
+                /*
+                std::set<vertex_descriptor> traversed;
+                for (auto hop : mir(out_edges(mid_point, graph))) {
+                    auto hop_target = target(hop, graph);
+
+                    if (hop_target != self)
+                        add_edge(self, hop_target, graph);
+                    //std::cout << "\n DEBUG: " << graph[self].name << "  " << graph[mid_point].name << "  " << graph[hop_target].name << " ";
+                }
+                //std::cout << "\n";
+
+                //clear_vertex(mid_point, graph);
+                //to_remove.insert(mid_point);
+                */
+
+            }
+
+            //std::cout << graph[mid_point].name;
+        }
+
+        //std::cout << "\n\n";
+    }
+
+    //for(auto vd : to_remove)
+    //{
+      //  clear_vertex(vd, graph);
+      //  remove_vertex(vd, graph);
+    //}
+
+    std::cout << "# of vertices: " << num_vertices(graph) << "\n";
+    std::cout << "# of edges:    " << num_edges(graph)    << "\n";
+
+    return graph;
+}
+
 
 
 void makegraph(){
@@ -377,6 +454,9 @@ void makegraph(){
     save(graph, "before.dot");
     numcomponents(graph);
   
+    cerr << "Removing edges with weights less than 10" << endl;
+    auto const h = reduce(graph);
+    save(h, "after.dot");
 }
 
 
