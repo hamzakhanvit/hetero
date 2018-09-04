@@ -46,7 +46,8 @@ static const char USAGE_MESSAGE[] =
     "\n"
     "  -i, --input-bloom=FILE     load bloom filter from FILE\n"
     "  -f, --kmerfasta=FILE       kmer fasta FILE\n" 
-    "-t, --threads=N                    Use N parallel threads [1]\n" 
+    "  -t, --threads=N            Use N parallel threads [1]\n"
+    "  -k, --kmersize=N           kmer size[41]\n"
     "      --help	          display this help and exit\n"
     "      --version	          output version information and exit\n"
     "\n"
@@ -55,7 +56,7 @@ static const char USAGE_MESSAGE[] =
 using namespace std;
 
 namespace opt {
-unsigned k=50;
+unsigned k=41;
 unsigned nhash;
 unsigned nThrd=1;
 static string inputBloomPath;
@@ -69,14 +70,15 @@ unordered_set<string> hetero_kmers;
 unordered_map<string, vector<string>> kmerbarcodes;
 }
 
-static const char shortopts[] = "t:i:f:hv";
+static const char shortopts[] = "t:i:f:k:hv";
 
 enum { OPT_HELP = 1, OPT_VERSION };
 
 static const struct option longopts[] = {
     { "input-bloom", required_argument, NULL, 'i' },  
     { "kmerfasta", required_argument, NULL, 'f' },
-    {"threads", required_argument, NULL, 't' },
+    { "kmersize", required_argument, NULL, 'k'},
+    { "threads", required_argument, NULL, 't' },
     { "help",	no_argument, NULL, OPT_HELP },
     { "version",	no_argument, NULL, OPT_VERSION },
     { NULL, 0, NULL, 0 }
@@ -197,9 +199,9 @@ void findheteroreads(int optind, char** argv) {
     }
 
     cerr << "Completed findheteroreads" << ", Size of hetero::hetero_kmers = "<<  hetero::hetero_kmers.size()<< endl;
-    //for (auto &y:hetero::hetero_kmers)
-    //    cerr << "-hetero = " << y << endl;  
-
+    for (auto &y:hetero::hetero_kmers){
+        cerr << "-hetero = " << y << endl;  
+    }
     //kmers.clear();
 }
 
@@ -211,28 +213,43 @@ void findcommonbarcodes(int optind, char** argv) {
     kfile << "kmer\tbarcodes\n";
 
     FastaReader reader(argv[optind], FastaReader::FOLD_CASE);
-   
+  
+    std::ofstream headerfile("headerfile.tsv");
+    headerfile << "ID\tbarcode\n";
+ 
     for (FastaRecord rec; reader >> rec;) {
         if((int)rec.seq.length()<(int)(opt::k+5))
             continue;
-
         std::string current_sec = rec.seq;
+        headerfile<<rec.id<<"\t"<<rec.comment<<endl;
         //cout << rec.id << " - "  << rec.comment <<endl;
         //cout << rec.seq << endl; 
         //unsigned int pos = (opt::k)-1;
         int str_length = current_sec.length();
+        unordered_map<string, vector<string>> temp_kmerbarcodes;          
 
-         
         #pragma omp parallel for schedule(guided)  shared (hetero::hetero_kmers, hetero::kmerbarcodes, current_sec, str_length)
-        for (unsigned int x=0; x < (str_length-((opt::k)-1)-2); x++) {
+        for (unsigned int x=0; x < (str_length-((opt::k)-1)); x++) {
             string it = current_sec.substr(x,(opt::k));
             //pos=pos+1;
+            //cout << "it = " << it << endl;
             if((hetero::hetero_kmers.find(canonical_representation(it.c_str())) != hetero::hetero_kmers.end()) && (rec.comment!="")) {
             //if(bf.contains(it.c_str())) {
                 //std::cout << "Present kmer " << it << " in "  << rec.id << " Barcode = "<< rec.comment <<"\n";
                 #pragma omp critical
-                hetero::kmerbarcodes[it].push_back(rec.comment);
+                temp_kmerbarcodes[it].push_back(rec.comment);
             }
+            //A true SNP position will have multiple kmers             
+        }
+        
+        if(temp_kmerbarcodes.size()<((opt::k)+5) && temp_kmerbarcodes.size()>((opt::k)-5)) {
+            for (auto e = temp_kmerbarcodes.begin(); e != temp_kmerbarcodes.end(); e++)    {
+                 for(auto &d: e->second){hetero::kmerbarcodes[e->first].push_back(d);}
+            }
+        //for (auto e = hetero::kmerbarcodes.begin(); e != hetero::kmerbarcodes.end(); e++)    {
+        //         cout << "e->first = " << e->first << "-->"; for(auto &d: e->second){cout << "d in e->second = " << d << ",";} cout << endl;
+        //    }
+        temp_kmerbarcodes.clear(); 
         }
 
     }
@@ -322,48 +339,22 @@ Graph reduce(Graph graph) {
 
     /* iterator throught the graph  */
     for (auto self : mir(vertices(graph)))
-    {
-        //std::cout << graph[self].name << (boost::empty(mir(out_edges(self, graph)))? " has no children " : " is the parent of ");
-
+    {      
+        //cout << "self = " << self << endl; 
+        //Iterate through all edges belonging to a vertex and remove edges less than the given weight
         for(auto edge : mir(out_edges(self, graph))) {
             auto weight    = boost::get(boost::edge_weight, graph, edge);
-            //auto mid_point = target(edge, graph);
-
-            //if (to_remove.count(mid_point)) // already elided
-            //    break;
-
             if (weight < 10.0f) {
-
+                //cout << "edge = " << edge << endl;;
                 remove_edge(edge, graph);
-
-                /*
-                std::set<vertex_descriptor> traversed;
-                for (auto hop : mir(out_edges(mid_point, graph))) {
-                    auto hop_target = target(hop, graph);
-
-                    if (hop_target != self)
-                        add_edge(self, hop_target, graph);
-                    //std::cout << "\n DEBUG: " << graph[self].name << "  " << graph[mid_point].name << "  " << graph[hop_target].name << " ";
-                }
-                //std::cout << "\n";
-
-                //clear_vertex(mid_point, graph);
-                //to_remove.insert(mid_point);
-                */
-
             }
-
-            //std::cout << graph[mid_point].name;
         }
-
-        //std::cout << "\n\n";
+        //cout << "degree of vertex =  " << degree(self, graph)  << "\n";
+        //Remove vertex if its degree is zero 
+        if (degree(self, graph) == 0)
+            remove_vertex(self, graph);        
+               
     }
-
-    //for(auto vd : to_remove)
-    //{
-      //  clear_vertex(vd, graph);
-      //  remove_vertex(vd, graph);
-    //}
 
     std::cout << "# of vertices: " << num_vertices(graph) << "\n";
     std::cout << "# of edges:    " << num_edges(graph)    << "\n";
@@ -480,6 +471,9 @@ int main(int argc, char** argv) {
         case 't':
             arg >> opt::nThrd;
             break;
+        case 'k':
+            arg >> opt::k;
+            break;
         case OPT_HELP:
             std::cerr << USAGE_MESSAGE;
             exit(EXIT_SUCCESS);
@@ -505,7 +499,7 @@ int main(int argc, char** argv) {
     #ifdef _OPENMP
     omp_set_num_threads(opt::nThrd);
     #endif
-
+/*
     if (!opt::inputBloomPath.empty()) {
 
         if (opt::verbose)
@@ -530,8 +524,10 @@ int main(int argc, char** argv) {
 
         //BloomFilter bloom(opt::m, opt::nhash, opt::k, opt::inputBloomPath.c_str());
         //cerr << bloom.getPop() << "\n";
-
-        //findheteroreads(bloom, optind, argv);
+    }
+    */
+    
+    if (!opt::inputBloomPath.empty()) {
         findheteroreads(optind, argv);
         findcommonbarcodes(optind, argv);
         makegraph();
