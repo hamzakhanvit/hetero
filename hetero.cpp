@@ -29,6 +29,7 @@
 #include <unordered_set>
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/connected_components.hpp>
+#include <boost/algorithm/string.hpp>
 
 #define PROGRAM "hetero"
 
@@ -66,7 +67,7 @@ double FPR=0.0;
 }
 
 namespace hetero {
-unordered_set<string> hetero_kmers;
+unordered_map<string, int> hetero_kmers;
 unordered_map<string, vector<string>> kmerbarcodes;
 }
 
@@ -85,20 +86,18 @@ static const struct option longopts[] = {
 };
 
 
-void is_kmer_hetero(string it, unordered_set<string>& kmers){
+void is_kmer_hetero(string it, unordered_set<string>& kmers,  unordered_map<string, int>& dskkmercount){
 //bool is_kmer_hetero(string it, BloomFilter& bf){
-    
-    int hetero_chance = 0;
-    //cout << "kmer =" << it << endl;
-    std::string test_kmer = it;
-    //vector<string> check;
 
-    //vector<char> bases = {'A','T','G','C'};
+    vector<int> hetero_chance;    
+    cout << " kmer =" << it << " DSK count = " << dskkmercount[it] << endl;
+    std::string test_kmer = it;
+ 
     const char* bases = "ACGT";
 
     for (size_t x=0; x < it.length(); x++) {
         ////int FID = omp_get_thread_num();
-        ////cout << "x=" << x << " FID = " << FID << endl;     
+        cout << "x=" << x <<endl;;   
          
         test_kmer = it;
         char curr_base = test_kmer[x];
@@ -110,8 +109,12 @@ void is_kmer_hetero(string it, unordered_set<string>& kmers){
             }
 
             test_kmer[x] = test_base;
-            //cout << "tmer =" << test_kmer << endl;
-            hetero_chance += kmers.find(canonical_representation(test_kmer)) != kmers.end();
+            cout << " tmer =" << test_kmer << endl;
+            if (kmers.find(canonical_representation(test_kmer)) != kmers.end()){
+                cout << " tmer DSK Count = " << dskkmercount[canonical_representation(test_kmer)] << endl;
+                hetero_chance.push_back(x);
+                cout << "Yes hetero" <<endl;
+            }
        }
     }
 
@@ -119,11 +122,11 @@ void is_kmer_hetero(string it, unordered_set<string>& kmers){
     //    cerr << "\nCheck=" << i << endl;
 
     ////cout << "hetero_chance = " << hetero_chance << endl;
-    int is_hetero = (hetero_chance == 1 ? 1 : 0);
+    int is_hetero = (hetero_chance.size() == 1 ? 1 : 0);
     ////cout << it << " is hetero? " << is_hetero << endl;
     if(is_hetero) {
-        #pragma omp critical
-        hetero::hetero_kmers.insert(it);
+             #pragma omp critical
+             hetero::hetero_kmers[it]=hetero_chance[0];
     }
 }
 
@@ -134,12 +137,19 @@ void findheteroreads(int optind, char** argv) {
     
     cout  << argv[optind] << endl; 
     unordered_set<string> kmers;
-   
+    unordered_map<string, int> dskkmercount;  
+ 
     FastaReader kmerreader((opt::kmerfastafile).c_str(), FastaReader::FOLD_CASE);
     cout << "kmer Filename = " << opt::kmerfastafile << endl;    
  
     for (FastaRecord kmer;kmerreader >> kmer;){
         kmers.insert(canonical_representation(kmer.seq));
+ 
+        std::vector<std::string> splitkmerid;
+        boost::algorithm::split(splitkmerid, kmer.id, boost::is_any_of("_"));  
+
+        dskkmercount[canonical_representation(kmer.seq)] = std::stoi(splitkmerid[2]);
+        //cout << "kmer ID = " << kmer.id << ", Count = " << splitkmerid[2] << endl;
         //bool is_hetero = is_kmer_hetero(kmer.seq,bf); 
         //cout << kmer.seq << " is hetero? " << is_hetero << endl;
     }
@@ -194,13 +204,13 @@ void findheteroreads(int optind, char** argv) {
     #pragma omp parallel for schedule(guided) shared (hetero::hetero_kmers, kmers) 
     for (int i = 0; i < kmers_vec_size; i++) {
         //cerr << i << endl;
-        is_kmer_hetero(kmers_vec[i],kmers);
+        is_kmer_hetero(kmers_vec[i],kmers, dskkmercount);
 
     }
 
     cerr << "Completed findheteroreads" << ", Size of hetero::hetero_kmers = "<<  hetero::hetero_kmers.size()<< endl;
-    for (auto &y:hetero::hetero_kmers){
-        cerr << "-hetero = " << y << endl;  
+    for (auto y = hetero::hetero_kmers.begin(); y!=hetero::hetero_kmers.end(); y++){
+        cerr << "-hetero = " << y->first << "-" << y->second << endl;  
     }
     //kmers.clear();
 }
@@ -231,13 +241,16 @@ void findcommonbarcodes(int optind, char** argv) {
         #pragma omp parallel for schedule(guided)  shared (hetero::hetero_kmers, hetero::kmerbarcodes, current_sec, str_length)
         for (unsigned int x=0; x < (str_length-((opt::k)-1)); x++) {
             string it = current_sec.substr(x,(opt::k));
-            //pos=pos+1;
-            //cout << "it = " << it << endl;
-            if((hetero::hetero_kmers.find(canonical_representation(it.c_str())) != hetero::hetero_kmers.end()) && (rec.comment!="")) {
+            string canon_it = canonical_representation(it.c_str());
+
+            cout << "x=" << x << ", kmer=" << it << ", canon_it=" << canon_it << endl;
+
+
+            if((hetero::hetero_kmers.find(canon_it) != hetero::hetero_kmers.end()) && (rec.comment!="")) {
             //if(bf.contains(it.c_str())) {
                 //std::cout << "Present kmer " << it << " in "  << rec.id << " Barcode = "<< rec.comment <<"\n";
                 #pragma omp critical
-                temp_kmerbarcodes[it].push_back(rec.comment);
+                temp_kmerbarcodes[canon_it].push_back(rec.comment);
             }
             //A true SNP position will have multiple kmers             
         }

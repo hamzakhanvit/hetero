@@ -6,6 +6,7 @@
 #include <cstdlib> // for abort
 #include <iostream>
 #include <sstream>
+#include <unordered_map> 
 
 using namespace std;
 
@@ -92,8 +93,34 @@ Sequence reverseComplement(const Sequence& s)
 /** Return the lexicographically smallest between sequence and its rev complement. */
 Sequence canonical_representation(const Sequence& kmer) {
     Sequence revcom = reverseComplement(kmer);
+    unordered_map <char, int> bases;        // empty map container for  
+  
+    // insert base in hierarchy
+    bases.insert(pair <char, int> ('a', 4)); 
+    bases.insert(pair <char, int> ('c', 3)); 
+    bases.insert(pair <char, int> ('t', 2)); 
+    bases.insert(pair <char, int> ('g', 1));
+    bases.insert(pair <char, int> ('n', 0));
+   
+    //cout << "kmer = " << kmer << ", Revcom kmer = " << revcom
+    //          << ", lexgreater = " << (kmer < revcom ? kmer : revcom);
+ 
+    for (unsigned int i=0;i<kmer.length();i++) {
+         char kmerbase = tolower(kmer[i]);
+         char revbase = tolower(revcom[i]);
+
+         if(kmerbase!=revbase && bases[kmerbase]>bases[revbase]) {
+             //cout << ", KMER" << endl;
+             return kmer;
+         }
+         if(kmerbase!=revbase && bases[revbase]>bases[kmerbase]) {
+             //cout << ", REVCOM" << endl;;
+             return revcom;
+         }
+   
+    }
     //cout << "kmer = " << kmer << ", Revcom kmer = " << revcom << ", lexgreater = " << (kmer < revcom ? kmer : revcom) << endl;
-    return kmer < revcom ? kmer : revcom;
+    return kmer;
 }
 
 static const uint8_t b2C[256] = {
